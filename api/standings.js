@@ -22,47 +22,78 @@ const driverPhotos = {
 
 export default async function handler(req, res) {
   try {
-    const [cRes, dRes] = await Promise.all([
+    // Vérifier la méthode HTTP
+    if (req.method !== 'GET') {
+      return res.status(405).json({ error: 'Méthode non autorisée' });
+    }
+
+    const [constructorResponse, driverResponse] = await Promise.all([
       fetch('https://ergast.com/api/f1/current/constructorStandings.json'),
       fetch('https://ergast.com/api/f1/current/driverStandings.json')
     ]);
 
-    if (!cRes.ok || !dRes.ok) {
-      throw new Error(`API Error: constructors ${cRes.status}, drivers ${dRes.status}`);
+    // Vérifier si les requêtes ont réussi
+    if (!constructorResponse.ok || !driverResponse.ok) {
+      throw new Error('Erreur lors de la récupération des données F1');
     }
 
-    const cData = await cRes.json();
-    const dData = await dRes.json();
+    const constructorData = await constructorResponse.json();
+    const driverData = await driverResponse.json();
 
-    const standingsRaw = cData?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings || [];
-    const standings = standingsRaw.map(item => {
-      const nm = item.Constructor.name;
-      const a = teamAssets[nm] || {};
-      return { 
-        position: item.position, 
-        team: nm, 
-        points: item.points, 
-        logo: a.logo || null, 
-        car: a.car || null 
+    // Vérifier la structure des données
+    const constructorStandings = constructorData?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings;
+    const driverStandings = driverData?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings;
+
+    if (!constructorStandings || !driverStandings || driverStandings.length === 0) {
+      throw new Error('Structure de données invalide');
+    }
+
+    // Traitement des classements constructeurs
+    const standings = constructorStandings.map(item => {
+      const teamName = item.Constructor.name;
+      const assets = teamAssets[teamName] || { logo: null, car: null, color: "#FFFFFF" };
+      
+      return {
+        position: parseInt(item.position),
+        team: teamName,
+        points: parseInt(item.points),
+        logo: assets.logo,
+        car: assets.car,
+        color: assets.color
       };
     });
 
-    const dr = dData?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0];
-    if (!dr) throw new Error("Driver standings data missing");
+    // Traitement du pilote en tête
+    const leadingDriver = driverStandings[0];
+    const driverName = `${leadingDriver.Driver.givenName} ${leadingDriver.Driver.familyName}`;
+    const driverPhoto = driverPhotos[leadingDriver.Driver.driverId] || null;
+    const driverTeam = leadingDriver.Constructors[0].name;
+    const backgroundGradient = [
+      "#000000", 
+      teamAssets[driverTeam]?.color || "#FFFFFF"
+    ];
 
-    const name = dr.Driver.givenName + ' ' + dr.Driver.familyName;
-    const img = driverPhotos[dr.Driver.driverId] || null;
-    const team = dr.Constructors?.[0]?.name || "Unknown";
-    const gradient = ["#000000", teamAssets[team]?.color || "#FFFFFF"];
-
-    res.setHeader('Cache-Control', 's-maxage=3600');
+    // Configuration du cache
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    
+    // Réponse structurée
     res.status(200).json({
-      driverP1: { name, photo: img, team, points: dr.points },
-      backgroundGradient: gradient,
-      standings
+      driverP1: {
+        name: driverName,
+        photo: driverPhoto,
+        team: driverTeam,
+        points: parseInt(leadingDriver.points)
+      },
+      backgroundGradient,
+      standings,
+      lastUpdated: new Date().toISOString()
     });
-  } catch (err) {
-    console.error("F1 Widget API error:", err);
-    res.status(500).json({ error: "Erreur récupération F1." });
+
+  } catch (error) {
+    console.error('Erreur API F1:', error);
+    res.status(500).json({ 
+      error: "Erreur lors de la récupération des données F1",
+      message: error.message 
+    });
   }
 }
