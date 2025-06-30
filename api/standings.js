@@ -26,21 +26,43 @@ export default async function handler(req, res) {
       fetch('https://ergast.com/api/f1/current/constructorStandings.json'),
       fetch('https://ergast.com/api/f1/current/driverStandings.json')
     ]);
+
+    if (!cRes.ok || !dRes.ok) {
+      throw new Error(`API Error: constructors ${cRes.status}, drivers ${dRes.status}`);
+    }
+
     const cData = await cRes.json();
     const dData = await dRes.json();
-    const standings = cData.MRData.StandingsTable.StandingsLists[0].ConstructorStandings.map(item => {
+
+    const standingsRaw = cData?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings || [];
+    const standings = standingsRaw.map(item => {
       const nm = item.Constructor.name;
       const a = teamAssets[nm] || {};
-      return { position: item.position, team: nm, points: item.points, logo: a.logo, car: a.car };
+      return { 
+        position: item.position, 
+        team: nm, 
+        points: item.points, 
+        logo: a.logo || null, 
+        car: a.car || null 
+      };
     });
-    const dr = dData.MRData.StandingsTable.StandingsLists[0].DriverStandings[0];
+
+    const dr = dData?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0];
+    if (!dr) throw new Error("Driver standings data missing");
+
     const name = dr.Driver.givenName + ' ' + dr.Driver.familyName;
     const img = driverPhotos[dr.Driver.driverId] || null;
-    const team = dr.Constructors[0].name;
+    const team = dr.Constructors?.[0]?.name || "Unknown";
     const gradient = ["#000000", teamAssets[team]?.color || "#FFFFFF"];
+
     res.setHeader('Cache-Control', 's-maxage=3600');
-    res.status(200).json({ driverP1: { name, photo: img, team, points: dr.points }, backgroundGradient: gradient, standings });
-  } catch {
+    res.status(200).json({
+      driverP1: { name, photo: img, team, points: dr.points },
+      backgroundGradient: gradient,
+      standings
+    });
+  } catch (err) {
+    console.error("F1 Widget API error:", err);
     res.status(500).json({ error: "Erreur récupération F1." });
   }
 }
