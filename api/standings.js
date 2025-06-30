@@ -27,18 +27,39 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: 'Méthode non autorisée' });
     }
 
-    const [constructorResponse, driverResponse] = await Promise.all([
-      fetch('https://ergast.com/api/f1/current/constructorStandings.json'),
-      fetch('https://ergast.com/api/f1/current/driverStandings.json')
+    // Configuration des requêtes avec timeout et headers
+    const fetchOptions = {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'F1-Widget-API/1.0',
+        'Accept': 'application/json',
+      },
+      timeout: 10000 // 10 secondes
+    };
+
+    const [constructorResponse, driverResponse] = await Promise.allSettled([
+      fetch('https://ergast.com/api/f1/current/constructorStandings.json', fetchOptions),
+      fetch('https://ergast.com/api/f1/current/driverStandings.json', fetchOptions)
     ]);
 
-    // Vérifier si les requêtes ont réussi
-    if (!constructorResponse.ok || !driverResponse.ok) {
-      throw new Error('Erreur lors de la récupération des données F1');
+    // Vérifier les résultats des requêtes
+    if (constructorResponse.status === 'rejected' || driverResponse.status === 'rejected') {
+      console.error('Erreur de fetch:', {
+        constructor: constructorResponse.reason?.message,
+        driver: driverResponse.reason?.message
+      });
+      throw new Error('Impossible de récupérer les données depuis l\'API Ergast');
     }
 
-    const constructorData = await constructorResponse.json();
-    const driverData = await driverResponse.json();
+    const cRes = constructorResponse.value;
+    const dRes = driverResponse.value;
+
+    if (!cRes.ok || !dRes.ok) {
+      throw new Error(`Erreur HTTP: Constructor ${cRes.status}, Driver ${dRes.status}`);
+    }
+
+    const constructorData = await cRes.json();
+    const driverData = await dRes.json();
 
     // Vérifier la structure des données
     const constructorStandings = constructorData?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings;
